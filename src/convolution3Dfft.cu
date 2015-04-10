@@ -178,79 +178,6 @@ void writeOutCUDAfft(char* filename,imageType* fftCUDA,int* fftCUDAdims)
 }
 
 
-//=====================================================================
-//WARNING: for cuFFT the fastest running index is z direction!!! so pos = z + imDim[2] * (y + imDim[1] * x)
-imageType* convolution3DfftCUDA(imageType* im,int* imDim,imageType* kernel,int devCUDA)
-{
-	imageType* convResult = NULL;
-	imageType* imCUDA = NULL;
-	imageType* kernelCUDA = NULL;
-
-
-	cufftHandle fftPlanFwd, fftPlanInv;
-
-	
-	HANDLE_ERROR( cudaSetDevice( devCUDA ) );
-
-	long long int imSize = 1;
-	for(int ii=0;ii<dimsImage;ii++)
-	{
-		imSize *= (long long int) (imDim[ii]);
-	}
-
-	long long int imSizeFFT = imSize+(long long int)(2*imDim[0]*imDim[1]); //size of the R2C transform in cuFFTComplex
-
-	//allocate memory for output result
-	convResult = new imageType[imSize];
-
-	//allocat ememory in GPU
-	HANDLE_ERROR( cudaMalloc( (void**)&(imCUDA), imSizeFFT*sizeof(imageType) ) );//a little bit larger to allow in-place FFT
-	HANDLE_ERROR( cudaMalloc( (void**)&(kernelCUDA), imSizeFFT*sizeof(imageType) ) );
-
-
-	//TODO: pad image to a power of 2 size in all dimensions (use whatever  boundary conditions you want to apply)
-	//TODO: pad kernel to image size
-	//TODO: pad kernel and image to xy(z/2 + 1) for in-place transform
-	//NOTE: in the example for 2D convolution using FFT in the Nvidia SDK they do the padding in the GPU, but in might be pushing the memory in the GPU for large images.
-
-	//printf("Copying memory (kernel and image) to GPU\n");
-	HANDLE_ERROR( cudaMemcpy( kernelCUDA, kernel, imSize*sizeof(imageType) , cudaMemcpyHostToDevice ) );
-	HANDLE_ERROR( cudaMemcpy( imCUDA, im, imSize*sizeof(imageType) , cudaMemcpyHostToDevice ) );
-	
-	//printf("Creating R2C & C2R FFT plans for size %i x %i x %i\n",imDim[0],imDim[1],imDim[2]);
-	cufftPlan3d(&fftPlanFwd, imDim[0], imDim[1], imDim[2], CUFFT_R2C);HANDLE_ERROR_KERNEL;
-	cufftSetCompatibilityMode(fftPlanFwd,CUFFT_COMPATIBILITY_NATIVE);HANDLE_ERROR_KERNEL; //for highest performance since we do not need FFTW compatibility
-	cufftPlan3d(&fftPlanInv, imDim[0], imDim[1], imDim[2], CUFFT_C2R);HANDLE_ERROR_KERNEL;
-	cufftSetCompatibilityMode(fftPlanInv,CUFFT_COMPATIBILITY_NATIVE);HANDLE_ERROR_KERNEL;
-
-	//transforming convolution kernel; TODO: if I do multiple convolutions with the same kernel I could reuse the results at teh expense of using out-of place memory (and then teh layout of the data is different!!!! so imCUDAfft should also be out of place)
-	//NOTE: from CUFFT manual: If idata and odata are the same, this method does an in-place transform.
-	//NOTE: from CUFFT manual: inplace output data xy(z/2 + 1) with fcomplex. Therefore, in order to perform an in-place FFT, the user has to pad the input array in the last dimension to Nn2 + 1 complex elements interleaved. Note that the real-to-complex transform is implicitly forward.
-	cufftExecR2C(fftPlanFwd, imCUDA, (cufftComplex *)imCUDA);HANDLE_ERROR_KERNEL;
-	//transforming image
-	cufftExecR2C(fftPlanFwd, kernelCUDA, (cufftComplex *)kernelCUDA);HANDLE_ERROR_KERNEL;
-	
-
-	//multiply image and kernel in fourier space (and normalize)
-	//NOTE: from CUFFT manual: CUFFT performs un-normalized FFTs; that is, performing a forward FFT on an input data set followed by an inverse FFT on the resulting set yields data that is equal to the input scaled by the number of elements.
-	int numThreads=std::min((long long int)MAX_THREADS_CUDA,imSizeFFT/2);//we are using complex number
-	int numBlocks=std::min((long long int)MAX_BLOCKS_CUDA,(long long int)(imSizeFFT/2+(long long int)(numThreads-1))/((long long int)numThreads));
-	modulateAndNormalize_kernel<<<numBlocks,numThreads>>>((cufftComplex *)imCUDA, (cufftComplex *)kernelCUDA, imSizeFFT/2,1.0f/(float)(imSize));//last parameter is the size of the FFT
-
-	//inverse FFT 
-	cufftExecC2R(fftPlanInv, (cufftComplex *)imCUDA, imCUDA);HANDLE_ERROR_KERNEL;
-
-	//copy result to host
-	HANDLE_ERROR(cudaMemcpy(convResult,imCUDA,sizeof(imageType)*imSize,cudaMemcpyDeviceToHost));
-
-	//release memory
-	( cufftDestroy(fftPlanInv) );HANDLE_ERROR_KERNEL;
-    ( cufftDestroy(fftPlanFwd) );HANDLE_ERROR_KERNEL;
-	HANDLE_ERROR( cudaFree( imCUDA));
-	HANDLE_ERROR( cudaFree( kernelCUDA));
-
-	return convResult;
-}
 
 //=====================================================================
 //WARNING: for cuFFT the fastest running index is z direction!!! so pos = z + imDim[2] * (y + imDim[1] * x)
@@ -341,6 +268,15 @@ imageType* convolution3DfftCUDA(imageType* im,int* imDim,imageType* kernel,int* 
 
 	return convResult;
 }
+
+//=====================================================================
+//WARNING: for cuFFT the fastest running index is z direction!!! so pos = z + imDim[2] * (y + imDim[1] * x)
+imageType* convolution3DfftCUDA(imageType* im,int* imDim,imageType* kernel,int devCUDA)
+{
+  
+	return convolution3DfftCUDA(im,imDim,kernel,imDim,devCUDA);
+}
+
 
 //=====================================================================
 //WARNING: for cuFFT the fastest running index is z direction!!! so pos = z + imDim[2] * (y + imDim[1] * x)
@@ -438,104 +374,3 @@ void convolution3DfftCUDAInPlace(imageType* im,int* imDim,imageType* kernel,int*
 
 }
 
-
-//=====================================================================
-//WARNING: for cuFFT the fastest running index is z direction!!! so pos = z + imDim[2] * (y + imDim[1] * x)
-//NOTE: to avoid transferring a large padded kernel, since memcpy is a limiting factor 
-/*
-void convolution3DfftCUDAInPlaceSaveMemory(imageType* im,int* imDim,imageType* kernel,int* kernelDim,int devCUDA)
-{
-	imageType* imCUDA = NULL;
-	imageType* kernelCUDA = NULL;
-	//imageType* kernelFFTCUDA = NULL; //I need a duplicate in order to perform FFTshift (I can not do it in place)
-
-	cufftHandle fftPlanFwd, fftPlanInv;
-
-	
-	HANDLE_ERROR( cudaSetDevice( devCUDA ) );
-
-	long long int imSize = 1;
-	long long int kernelSize = 1;
-	for(int ii=0;ii<dimsImage;ii++)
-	{
-		imSize *= (long long int) (imDim[ii]);
-		kernelSize *= (long long int) (kernelDim[ii]);
-	}
-
-	long long int imSizeFFT = imSize+(long long int)(2*imDim[0]*imDim[1]); //size of the R2C transform in cuFFTComplex
-	long long int kernelSizeFFT = kernelSize + (long long int)(2*kernelDim[0]*kernelDim[1]);
-
-	
-
-	//allocat ememory in GPU
-	HANDLE_ERROR( cudaMalloc( (void**)&(imCUDA), imSizeFFT*sizeof(imageType) ) );//a little bit larger to allow in-place FFT
-	HANDLE_ERROR( cudaMalloc( (void**)&(kernelCUDA), (kernelSizeFFT)*sizeof(imageType) ) );
-	//HANDLE_ERROR( cudaMalloc( (void**)&(kernelFFTCUDA), (kernelSizeFFT)*sizeof(imageType) ) );
-
-	//TODO: pad image to a power of 2 size in all dimensions (use whatever  boundary conditions you want to apply)
-	//TODO: pad kernel to image size
-	//TODO: pad kernel and image to xy(z/2 + 1) for in-place transform
-	//NOTE: in the example for 2D convolution using FFT in the Nvidia SDK they do the padding in the GPU, but in might be pushing the memory in the GPU for large images.
-
-	//printf("Copying memory (kernel and image) to GPU\n");
-	HANDLE_ERROR( cudaMemcpy( kernelCUDA, kernel, kernelSize*sizeof(imageType) , cudaMemcpyHostToDevice ) );
-	HANDLE_ERROR( cudaMemcpy( imCUDA, im, imSize*sizeof(imageType) , cudaMemcpyHostToDevice ) );
-
-
-	//apply ffshift to kernel and pad it with zeros so we can calculate convolution with FFT
-	//HANDLE_ERROR( cudaMemset( kernelFFTCUDA, 0, kernelSizeFFT*sizeof(imageType) ));
-	//int numThreads=std::min((long long int)MAX_THREADS_CUDA,kernelSize);
-	//int numBlocks=std::min((long long int)MAX_BLOCKS_CUDA,(long long int)(kernelSize+(long long int)(numThreads-1))/((long long int)numThreads));
-	//fftShiftKernel<<<numBlocks,numThreads>>>(kernelCUDA,kernelFFTCUDA,kernelDim[0],kernelDim[1],kernelDim[2],kernelDim[0],kernelDim[1],kernelDim[2]);HANDLE_ERROR_KERNEL;
-
-	
-	//make sure GPU finishes 
-	HANDLE_ERROR(cudaDeviceSynchronize());	
-
-	//printf("Creating R2C & C2R FFT plans for size %i x %i x %i\n",imDim[0],imDim[1],imDim[2]);
-	cufftPlan3d(&fftPlanFwd, imDim[0], imDim[1], imDim[2], CUFFT_R2C);HANDLE_ERROR_KERNEL;
-	cufftSetCompatibilityMode(fftPlanFwd,CUFFT_COMPATIBILITY_NATIVE);HANDLE_ERROR_KERNEL; //for highest performance since we do not need FFTW compatibility
-	//transforming convolution kernel; TODO: if I do multiple convolutions with the same kernel I could reuse the results at teh expense of using out-of place memory (and then teh layout of the data is different!!!! so imCUDAfft should also be out of place)
-	//NOTE: from CUFFT manual: If idata and odata are the same, this method does an in-place transform.
-	//NOTE: from CUFFT manual: inplace output data xy(z/2 + 1) with fcomplex. Therefore, in order to perform an in-place FFT, the user has to pad the input array in the last dimension to Nn2 + 1 complex elements interleaved. Note that the real-to-complex transform is implicitly forward.
-	cufftExecR2C(fftPlanFwd, imCUDA, (cufftComplex *)imCUDA);HANDLE_ERROR_KERNEL;
-
-
-	//transforming kernel
-	cufftDestroy(fftPlanFwd); HANDLE_ERROR_KERNEL;
-	cufftPlan3d(&fftPlanFwd, kernelDim[0], kernelDim[1], kernelDim[2], CUFFT_R2C);HANDLE_ERROR_KERNEL;
-	cufftSetCompatibilityMode(fftPlanFwd,CUFFT_COMPATIBILITY_NATIVE);HANDLE_ERROR_KERNEL; //for highest performance since we do not need FFTW compatibility
-	cufftExecR2C(fftPlanFwd, kernelCUDA, (cufftComplex *)kernelCUDA);HANDLE_ERROR_KERNEL;
-
-
-	//int fftCUDAdims[dimsImage] ={kernelDim[0],kernelDim[1],1+kernelDim[2]/2};
-	//writeOutCUDAfft("E:/temp/fftCUDAbad.bin",kernelCUDA,fftCUDAdims);
-
-	//multiply image and kernel in fourier space (and normalize)
-	//NOTE: from CUFFT manual: CUFFT performs un-normalized FFTs; that is, performing a forward FFT on an input data set followed by an inverse FFT on the resulting set yields data that is equal to the input scaled by the number of elements.
-	int numThreads=std::min((long long int)MAX_THREADS_CUDA,imSizeFFT/2);//we are using complex numbers
-	int numBlocks=std::min((long long int)MAX_BLOCKS_CUDA,(long long int)(imSizeFFT/2+(long long int)(numThreads-1))/((long long int)numThreads));
-	//we multiply two FFT of different sizes (but one was just padded with zeros)
-	modulateAndNormalizeSubsampled_kernel<<<numBlocks,numThreads>>>((cufftComplex *)imCUDA, (cufftComplex *)kernelCUDA, kernelDim[0],kernelDim[1],kernelDim[2],imDim[0],imDim[1],imDim[2], imSizeFFT/2,1.0f/(float)(imSize));HANDLE_ERROR_KERNEL;
-
-
-	//we destroy memory first so we can perform larger block convoutions
-	cufftDestroy(fftPlanFwd) ;HANDLE_ERROR_KERNEL;
-	HANDLE_ERROR( cudaFree( kernelCUDA));
-	//HANDLE_ERROR( cudaFree( kernelFFTCUDA));
-
-	//inverse FFT 
-	cufftPlan3d(&fftPlanInv, imDim[0], imDim[1], imDim[2], CUFFT_C2R);HANDLE_ERROR_KERNEL;
-	cufftSetCompatibilityMode(fftPlanInv,CUFFT_COMPATIBILITY_NATIVE);HANDLE_ERROR_KERNEL;
-	cufftExecC2R(fftPlanInv, (cufftComplex *)imCUDA, imCUDA);HANDLE_ERROR_KERNEL;
-	
-
-	//copy result to host and overwrite image
-	HANDLE_ERROR(cudaMemcpy(im,imCUDA,sizeof(imageType)*imSize,cudaMemcpyDeviceToHost));
-
-	//release memory
-	( cufftDestroy(fftPlanInv) );HANDLE_ERROR_KERNEL;
-	HANDLE_ERROR( cudaFree( imCUDA));
-	
-}
-*/
