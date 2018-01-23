@@ -5,7 +5,6 @@
  *      Author: preibisch
  */
 #include "book.h"
-#include "cuda.h"
 
 #include "convolution3Dfft.h"
 
@@ -17,12 +16,11 @@
   int computeCapability = 0;
   int meta = 0;
   int value = -1;
-  int major = 0;
-  int minor = 0;
 
+  cudaDeviceProp dp;
   for (short devIdx = 0; devIdx < numDevices; ++devIdx) {
-    cuDeviceComputeCapability(&major, &minor, devIdx);
-    meta = 10 * major + minor;
+    cudaGetDeviceProperties(&dp,devIdx);
+    meta = 10 * dp.major + dp.minor;
     if (meta > computeCapability) {
       computeCapability = meta;
       value = devIdx;
@@ -34,18 +32,19 @@
 
  int getCUDAcomputeCapabilityMajorVersion(int devCUDA)
 {
-	int major = 0, minor = 0;
-	cuDeviceComputeCapability(&major, &minor,devCUDA);
+    cudaDeviceProp dp;
+    cudaGetDeviceProperties(&dp, devCUDA);
 
-	return major;
+	return dp.major;
 }
 
  int getCUDAcomputeCapabilityMinorVersion(int devCUDA)
 {
-	int major = 0, minor = 0;
-	cuDeviceComputeCapability(&major, &minor,devCUDA);
 
-	return minor;
+  cudaDeviceProp dp;
+  cudaGetDeviceProperties(&dp, devCUDA);
+
+  return dp.minor;
 }
 
  int getNumDevicesCUDA()
