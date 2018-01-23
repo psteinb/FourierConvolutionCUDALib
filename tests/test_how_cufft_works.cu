@@ -1,12 +1,6 @@
 #define BOOST_TEST_DYN_LINK
 #define BOOST_TEST_MODULE TEST_HOW_CUFFT_WORKS
 
-#ifdef __CUDACC_VER_MAJOR__
-#if __CUDACC_VER_MAJOR__ >= 9
-#define __CUDACC_VER__ 90000
-#endif
-#endif
-
 #include "boost/test/unit_test.hpp"
 #include <numeric>
 #include <vector>
@@ -15,14 +9,14 @@
 #define FC_TRACE false
 #endif
 
-
-#include "cufft.h"
-#include "cufft_test.cuh"
-
 #include "test_utils.hpp"
 #include "image_stack_utils.h"
 #include "traits.hpp"
 #include "book.h"
+
+
+#include "cufft.h"
+#include "cufft_test.cuh"
 
 
 namespace fourierconvolution {

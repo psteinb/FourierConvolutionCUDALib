@@ -65,6 +65,7 @@ foreach(p LIB INCLUDE SHARE)
   endif()
 endforeach()
 
+
 #########################################################################################################
 ## CUDA related
 # project options
@@ -75,7 +76,6 @@ IF(INCLUDE_CUDA)
     FIND_PACKAGE(CUDA)
     IF(CUDA_FOUND)
     SET(CUDA_VERBOSE_BUILD ON)
-    set(CUDA_ARCHS 10;20;30;35;37;50;52;60;61;70)
 
     SET(CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
     IF(APPLE)
@@ -92,6 +92,8 @@ IF(INCLUDE_CUDA)
       ENDIF()
     ENDIF(APPLE)
 
+    #derived from the default values of the SMS variable in
+    #<pathto-cuda-sdk-version>/samples/1_Utilities/deviceQuery/Makefile
     set(CUDA_ARCHS 10;20;21)
 
     IF("${CUDA_VERSION}" VERSION_GREATER "4.5")
@@ -112,11 +114,12 @@ IF(INCLUDE_CUDA)
     ENDIF()
 
     IF("${CUDA_VERSION}" VERSION_GREATER "7.5")
-      list(APPEND CUDA_ARCHS 60 61)#8.0+
+      list(APPEND CUDA_ARCHS 60 61)#8.0 and 8.0+
     ENDIF()
 
     IF("${CUDA_VERSION}" VERSION_GREATER "8.0")
-      list(APPEND CUDA_ARCHS 70)#8.0+
+      list(APPEND CUDA_ARCHS 70)#9.0 and 9.0+
+
     ENDIF()
 
 
@@ -133,7 +136,7 @@ IF(INCLUDE_CUDA)
 
         list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_${CUDA_HIGHEST_SM},code=compute_${CUDA_HIGHEST_SM}")
 
-    MESSAGE(">> CUDA version ${CUDA_VERSION} detected, compiling for Compute Capability/ies ${CUDA_ARCHS} (highest SM: ${CUDA_HIGHEST_SM})")
+    MESSAGE(">> CUDA ${CUDA_VERSION} detected, compiling for Compute Capability/ies ${CUDA_ARCHS} (highest SM: ${CUDA_HIGHEST_SM})")
 
     set(CUDA_NVCC_FLAGS_RELEASE ${CUDA_NVCC_FLAGS_RELEASE};-O2;--use_fast_math)
     set(CUDA_NVCC_FLAGS_DEBUG ${CUDA_NVCC_FLAGS_DEBUG};-g;-G)
@@ -159,15 +162,33 @@ ENDIF(INCLUDE_CUDA)
 # add subdirectories
 ADD_SUBDIRECTORY(src)
 
-FIND_PACKAGE (Boost 1.42 COMPONENTS system filesystem unit_test_framework thread QUIET)
-IF(Boost_FOUND AND ENABLE_TESTING)
-  unset(Boost_FOUND)
-  ADD_SUBDIRECTORY(tests)
-  enable_testing()
-  include("CTestLists.txt")
+
+#########################################################################################################
+## Finding Boost
+IF("${CUDA_VERSION}" VERSION_LESS "9.0")
+  #https://gitlab.kitware.com/cmake/cmake/commit/6297d6c7fd6f80dafe17c0aefeeb0439432aa4b0
+  FIND_PACKAGE (Boost 1.42 COMPONENTS system filesystem unit_test_framework thread QUIET)
+
+  if("${Boost_VERSION_MINOR}" VERSION_SMALLER "66" AND "${Boost_VERSION_MAJOR}" VERSION_EQUAL "1")
+  #https://svn.boost.org/trac10/ticket/13152
+  #tests with 1.66.0 showed that the tests can be compiled
+  set(ENABLE_TESTING OFF)
+endif()
+ELSE()
+  message(WARNING "CUDA 9+ detected: boost contains a 'feature' due to nvcc dropping support for the __CUDACC_VER__ macro when going to version 9; switching off tests completely (boost 1.66.0 is the first boost release that works with CUDA 9, but wasn't supported by cmake up until at least 3.10.2)")
+ENDIF()
+
+
+IF(Boost_FOUND)
+  if(ENABLE_TESTING)
+    unset(Boost_FOUND)
+    ADD_SUBDIRECTORY(tests)
+    enable_testing()
+    include("CTestLists.txt")
+  endif()
 ELSE()
   if(NOT Boost_FOUND)
-    MESSAGE(">> Boost libraries not found")
+    MESSAGE(">> Boost libraries not found or deliberately ignored")
   endif()
   MESSAGE(">> skipping test suite")
 ENDIF()
